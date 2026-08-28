@@ -1,2 +1,87 @@
 flask
 requests
+import os
+from flask import Flask
+import requests
+
+app = Flask(__name__)
+
+TWELVE_DATA_KEY = os.environ.get("TWELVE_DATA_KEY")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
+ALERT_EMAIL = os.environ.get("ALERT_EMAIL")
+
+SYMBOLS = ["XAU/USD", "EUR/USD"]
+
+def get_prices(symbol):
+    url = "https://api.twelvedata.com/time_series"
+        params = {
+                    "symbol": symbol,
+                            "interval": "1h",
+                                    "outputsize": 60,
+                                            "apikey": TWELVE_DATA_KEY
+        }
+            r = requests.get(url, params=params)
+                data = r.json()
+                    values = data.get("values", [])
+                        closes = [float(v["close"]) for v in reversed(values)]
+                            return closes
+
+                            def sma(values, period):
+                                return [sum(values[i-period:i]) / period for i in range(period, len(values) + 1)]
+
+                                def rsi(values, period=14):
+                                    gains, losses = [], []
+                                        for i in range(1, len(values)):
+                                                diff = values[i] - values[i - 1]
+                                                        gains.append(max(diff, 0))
+                                                                losses.append(max(-diff, 0))
+                                                                    avg_gain = sum(gains[-period:]) / period
+                                                                        avg_loss = sum(losses[-period:]) / period
+                                                                            if avg_loss == 0:
+                                                                                    return 100
+                                                                                        rs = avg_gain / avg_loss
+                                                                                            return 100 - (100 / (1 + rs))
+
+                                                                                            def send_email(subject, body):
+                                                                                                requests.post(
+                                                                                                            "https://api.resend.com/emails",
+                                                                                                                    headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
+                                                                                                                            json={
+                                                                                                                                            "from": "segnali@resend.dev",
+                                                                                                                                                        "to": [ALERT_EMAIL],
+                                                                                                                                                                    "subject": subject,
+                                                                                                                                                                                "text": body
+                                                                                                                            }
+                                                                                                )
+
+                                                                                                @app.route("/check")
+                                                                                                def check():
+                                                                                                    results = []
+                                                                                                        for symbol in SYMBOLS:
+                                                                                                                closes = get_prices(symbol)
+                                                                                                                        if len(closes) < 55:
+                                                                                                                                    results.append(f"{symbol}: dati insufficienti")
+                                                                                                                                                continue
+                                                                                                                                                        fast = sma(closes, 20)
+                                                                                                                                                                slow = sma(closes, 50)
+                                                                                                                                                                        offset = len(fast) - len(slow)
+                                                                                                                                                                                fast = fast[offset:]
+                                                                                                                                                                                        current_rsi = rsi(closes)
+                                                                                                                                                                                                crossed_up = fast[-2] <= slow[-2] and fast[-1] > slow[-1]
+                                                                                                                                                                                                        crossed_down = fast[-2] >= slow[-2] and fast[-1] < slow[-1]
+                                                                                                                                                                                                                if crossed_up and current_rsi < 70:
+                                                                                                                                                                                                                            send_email(f"Segnale ACQUISTO {symbol}", f"Prezzo: {closes[-1]}, RSI: {current_rsi:.1f}")
+                                                                                                                                                                                                                                        results.append(f"{symbol}: BUY")
+                                                                                                                                                                                                                                                elif crossed_down:
+                                                                                                                                                                                                                                                            send_email(f"Segnale VENDITA {symbol}", f"Prezzo: {closes[-1]}, RSI: {current_rsi:.1f}")
+                                                                                                                                                                                                                                                                        results.append(f"{symbol}: SELL")
+                                                                                                                                                                                                                                                                                else:
+                                                                                                                                                                                                                                                                                            results.append(f"{symbol}: nessun segnale")
+                                                                                                                                                                                                                                                                                                return {"result": results}
+
+                                                                                                                                                                                                                                                                                                if __name__ == "__main__":
+                                                                                                                                                                                                                                                                                                    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+                                                                                                                                                                                                                                                                                                    
+                                                                                                                            }
+                                                                                                )
+        }
